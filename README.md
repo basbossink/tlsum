@@ -23,6 +23,14 @@ This small application takes a timelog file as created by the
   
 `tlsum` assumes an 8 hour workday, any time alotted for lunch breaks is not taken into account for now.
 
+The excellent [ledger-cli](https://www.ledger-cli.org/), can create some nice 
+reports for the timelog as well I strongly recommend using it, refer to the 
+[documentation here](https://www.ledger-cli.org/3.0/doc/ledger3.html#Time-Keeping).
+This tool is merely a [Rust](https://www.rust-lang.org/) learning project,
+and a reimplementation of the [fish](https://fishshell.com/)
+and [awk](https://en.wikipedia.org/wiki/AWK)
+scripts in my [dot-files](https://github.com/basbossink/dot-files-via-chezmoi).
+
 ### Installation
 ```
 cargo install tlsum
