@@ -1,4 +1,5 @@
 extern crate time;
+use std::cmp;
 use std::str::FromStr;
 use time::error::Parse;
 use time::macros::datetime;
@@ -53,12 +54,12 @@ fn parse_line<'a>(s: &'a str) -> Result<Entry<'a>, ParseError> {
     let clock_type: ClockType = s[0..1].parse()?;
     let date_time_onward = &s[2..];
     let time_start_index = date_time_onward.find(SPACE).map(|t| t + 1);
-    let date_time_end = find_from(&date_time_onward, time_start_index, SPACE)
-        .ok_or(ParseError::UnparseableDate(None))?;
+    let date_time_end =
+        find_from(&date_time_onward, time_start_index, SPACE).unwrap_or(date_time_onward.len());
     let date_time_slice = &date_time_onward[0..date_time_end];
     let date_time =
         parse_timestamp(date_time_slice).map_err(|e| ParseError::UnparseableDate(Some(e)))?;
-    let rest = &date_time_onward[date_time_end + 1..];
+    let rest = &date_time_onward[cmp::min(date_time_onward.len(), date_time_end + 1)..];
     let project = match rest.len() {
         0 => None,
         _ => Some(rest),
@@ -94,11 +95,20 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_line() {
+    fn should_parse_clock_in_line() {
         let line = "i 2022/04/22 21:33:23 e:fc:fred";
-        let result: Entry = parse_line(line).unwrap();
+        let result = parse_line(line).unwrap();
         assert_eq!(ClockType::In, result.clock_type);
         assert_eq!(Some("e:fc:fred"), result.project);
         assert_eq!(datetime!(2022 - 04 - 22 21:33:23), result.date_time);
+    }
+
+    #[test]
+    fn should_parse_clock_out_line() {
+        let line = "o 2022/04/22 21:33:33";
+        let result = parse_line(line).unwrap();
+        assert_eq!(ClockType::Out, result.clock_type);
+        assert_eq!(None, result.project);
+        assert_eq!(datetime!(2022 - 04 - 22 21:33:33), result.date_time);
     }
 }
