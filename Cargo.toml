@@ -3,13 +3,30 @@ name = "tlsum"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tlsum"
+path = "src/main.rs"
+
 [profile.release]
 strip = true
 lto = true
 opt-level = "z"
+codegen-units = 1
+panic = "abort"
 
 [dependencies]
 anyhow = "1.0.57"
-itertools = "0.10.3"
 thiserror = "1.0.30"
 time = { version = "0.3.9", features = ["macros", "parsing", "local-offset", "formatting"] }
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "benchmark"
+harness = false
+
