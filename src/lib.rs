@@ -139,12 +139,12 @@ where
         last_entry = Some(entry.clone());
         state = (match (state, &entry.clock_type) {
             (States::ExpectingClockIn, ClockType::In) => {
-                let current_day = Some(entry.date_time.date());
-                if previous_date != current_day {
+                let current_date = Some(entry.date_time.date());
+                if previous_date != current_date {
                     worked_today = Duration::ZERO;
                     num_days_worked += 1;
                     first_punchin_today = entry.date_time;
-                    previous_date = current_day;
+                    previous_date = current_date;
                 }
                 previous = Some(entry.clone());
                 Ok(States::ExpectingClockOut)
