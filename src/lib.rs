@@ -34,8 +34,8 @@ impl FromStr for ClockType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.chars().next() {
             None => Err(ParseError::EmptyClockType),
-            Some('i') | Some('I') => Ok(ClockType::In),
-            Some('o') | Some('O') => Ok(ClockType::Out),
+            Some('i' | 'I') => Ok(ClockType::In),
+            Some('o' | 'O') => Ok(ClockType::Out),
             _ => Err(ParseError::UnknownClockType),
         }
     }
@@ -74,8 +74,7 @@ where
 
 pub fn timelog_path() -> Result<PathBuf> {
     let time_log = env::var_os(TIMELOG_ENV_VAR_NAME)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_TIMELOG_PATH));
+        .map_or_else(|| PathBuf::from(DEFAULT_TIMELOG_PATH), PathBuf::from);
     let err = format!("time log file [{:?}] does not exist", &time_log);
     time_log
         .exists()
@@ -88,7 +87,7 @@ fn find_from(s: &str, index: Option<usize>, pat: char) -> Option<usize> {
 }
 
 fn parse_line(
-    s: String,
+    s: &str,
     format: &Vec<fd::FormatItem<'_>>,
 ) -> Result<(ClockType, PrimitiveDateTime), ParseError> {
     let clock_type: ClockType = s[0..1].parse()?;
@@ -125,12 +124,12 @@ where
     for line in lines {
         line_number += 1;
         let ip = line.with_context(|| format!("failed to parse line {}", line_number))?;
-        let trimmed = ip.trim().to_string();
+        let trimmed = ip.trim().to_owned();
         if trimmed.starts_with(COMMENT) {
             continue;
         }
 
-        let (clock_type, time_stamp) = parse_line(trimmed, &format)
+        let (clock_type, time_stamp) = parse_line(&trimmed, &format)
             .with_context(|| format!("failed to parse line {}", line_number))?;
         state = (match (state, clock_type) {
             (States::ExpectingClockIn, ClockType::In) => {
@@ -185,11 +184,13 @@ where
     Ok(summary)
 }
 
+#[must_use]
 pub fn format_time(date_time: PrimitiveDateTime) -> String {
     let format = fd::parse("[hour]:[minute]").unwrap();
     date_time.time().format(&format).unwrap()
 }
 
+#[must_use]
 pub fn hours_mins(duration: Duration) -> String {
     let hours = duration.whole_hours();
     format!(
@@ -216,8 +217,8 @@ fn summarize(
     let now = now(format)?;
     let avg_worked = total_worked / num_days_worked;
     let total_worked_until_prev = total_worked - worked_today;
-    let overtime = total_worked_until_prev - ((num_days_worked - 1u32) * 8u32 * Duration::HOUR);
-    let still_to_work_8 = (8u32 * Duration::HOUR) - worked_today;
+    let overtime = total_worked_until_prev - ((num_days_worked - 1_u32) * 8_u32 * Duration::HOUR);
+    let still_to_work_8 = (8_u32 * Duration::HOUR) - worked_today;
     let still_to_work = still_to_work_8 - overtime;
     let time_to_leave = now + still_to_work;
     let time_to_leave_8 = now + still_to_work_8;
@@ -267,7 +268,7 @@ mod tests {
     fn should_parse_clock_in_line() {
         let format = create_timestampformat();
         let line = "i 2022/04/22 21:33:23 e:fc:fred";
-        let (clock_type, date_time) = parse_line(line.to_string(), &format).unwrap();
+        let (clock_type, date_time) = parse_line(line, &format).unwrap();
         assert_eq!(ClockType::In, clock_type);
         assert_eq!(datetime!(2022 - 04 - 22 21:33:23), date_time);
     }
@@ -276,7 +277,7 @@ mod tests {
     fn should_parse_clock_out_line() {
         let format = create_timestampformat();
         let line = "o 2022/04/22 21:33:33";
-        let (clock_type, date_time) = parse_line(line.to_string(), &format).unwrap();
+        let (clock_type, date_time) = parse_line(line, &format).unwrap();
         assert_eq!(ClockType::Out, clock_type);
         assert_eq!(datetime!(2022 - 04 - 22 21:33:33), date_time);
     }
