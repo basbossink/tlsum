@@ -17,10 +17,10 @@ flame:
 	cargo flamegraph
 
 test: 
-	cargo test
+	cargo nextest run -j 1
 
 watch:
-	watchexec -c -e rs cargo test
+	watchexec -c -e rs -- cargo nextest run -j 1
 
 clippy:
 	cargo clippy --all -- -W clippy::all -W clippy::pedantic -W clippy::restriction -W clippy::nursery -D warnings
