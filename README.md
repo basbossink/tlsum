@@ -1,7 +1,7 @@
 <div align="center">
 <h1 align="center">tlsum</h1>
 <br />
-<img alt="License: BSD-2-Clause" src="https://img.shields.io/badge/License-BSD-2-Clause-blue" /><br>
+<img alt="License: BSD-2-Clause" src="https://img.shields.io/badge/License-BSD-blue" /><br>
 <br>
 An emacs timelog summarizer.
 </div>
