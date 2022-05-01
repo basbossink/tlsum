@@ -2,6 +2,7 @@ alias b := build
 alias br := build-release
 alias t := test
 alias w := watch
+alias tc := test-coverage
 
 build:
 	cargo build
@@ -23,3 +24,6 @@ watch:
 
 clippy:
 	cargo clippy --all -- -W clippy::all -W clippy::pedantic -W clippy::restriction -W clippy::nursery -D warnings
+
+test-coverage:
+    cargo tarpaulin --skip-clean
