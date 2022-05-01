@@ -64,11 +64,11 @@ where
 pub fn timelog_path() -> Result<PathBuf> {
     let time_log = env::var_os(TIMELOG_ENV_VAR_NAME)
         .map_or_else(|| PathBuf::from(DEFAULT_TIMELOG_PATH), PathBuf::from);
-    let err = format!("time log file [{:?}] does not exist", &time_log);
-    time_log
-        .exists()
-        .then(|| time_log)
-        .ok_or_else(|| anyhow!(err))
+    if time_log.exists() {
+        Ok(time_log)
+    } else {
+        bail!("time log file [{:?}] does not exist", time_log)
+    }
 }
 
 fn find_from(s: &str, index: Option<usize>, pat: char) -> Option<usize> {
