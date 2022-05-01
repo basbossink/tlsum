@@ -75,12 +75,15 @@ where
 pub fn timelog_path() -> Result<PathBuf> {
     let time_log = env::var_os(TIMELOG_ENV_VAR_NAME)
         .map(PathBuf::from)
-        .unwrap_or(PathBuf::from(DEFAULT_TIMELOG_PATH));
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_TIMELOG_PATH));
     let err = format!("time log file [{:?}] does not exist", &time_log);
-    time_log.exists().then(|| time_log).ok_or(anyhow!(err))
+    time_log
+        .exists()
+        .then(|| time_log)
+        .ok_or_else(|| anyhow!(err))
 }
 
-fn find_from<'a>(s: &'a str, index: Option<usize>, pat: char) -> Option<usize> {
+fn find_from(s: &str, index: Option<usize>, pat: char) -> Option<usize> {
     index.and_then(|i| s[i..].find(pat).map(|j| i + j))
 }
 
@@ -163,17 +166,14 @@ where
             )),
         })?;
     }
-    match state {
-        States::ExpectingClockOut => {
-            let now = now(&format)?;
-            if now < clockin {
-                bail!("now is before clock in time on line {}", line_number);
-            }
-            let clocked = now - clockin;
-            worked_today += clocked;
-            total_worked += clocked;
+    if let States::ExpectingClockOut = state {
+        let now = now(&format)?;
+        if now < clockin {
+            bail!("now is before clock in time on line {}", line_number);
         }
-        _ => {}
+        let clocked = now - clockin;
+        worked_today += clocked;
+        total_worked += clocked;
     }
     let summary = summarize(
         worked_today,
