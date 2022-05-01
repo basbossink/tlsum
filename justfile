@@ -10,7 +10,7 @@ build-release:
 	RUSTFLAGS="-C target-cpu=native" cargo build --release
 
 crit:
-	RUSTFLAGS="-C target-cpu=native" CARGO_MANIFEST_DIR="{{justfile_directory()}}" cargo build --release
+	RUSTFLAGS="-C target-cpu=native" CARGO_MANIFEST_DIR="{{justfile_directory()}}" cargo criterion
 
 flame:
 	cargo flamegraph
