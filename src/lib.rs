@@ -81,7 +81,7 @@ pub fn timelog_path() -> Result<PathBuf> {
 }
 
 fn find_from<'a>(s: &'a str, index: Option<usize>, pat: char) -> Option<usize> {
-    index.map_or(None, |i| s[i..].find(pat).map_or(None, |j| Some(i + j)))
+    index.and_then(|i| s[i..].find(pat).map(|j| i + j))
 }
 
 fn parse_line(
@@ -92,9 +92,9 @@ fn parse_line(
     let date_time_onward = &s[2..];
     let time_start_index = date_time_onward.find(SPACE).map(|t| t + 1);
     let date_time_end =
-        find_from(&date_time_onward, time_start_index, SPACE).unwrap_or(date_time_onward.len());
+        find_from(date_time_onward, time_start_index, SPACE).unwrap_or(date_time_onward.len());
     let date_time_slice = &date_time_onward[0..date_time_end];
-    let date_time = parse_timestamp(date_time_slice, &format)
+    let date_time = parse_timestamp(date_time_slice, format)
         .map_err(|e| ParseError::UnparseableDate(Some(e)))?;
     Ok((clock_type, date_time))
 }
