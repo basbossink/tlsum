@@ -6,7 +6,6 @@ use std::io::BufRead;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
-use thiserror::Error;
 use time::error::Parse;
 use time::Date;
 use time::Duration;
@@ -29,26 +28,16 @@ enum ClockType {
 }
 
 impl FromStr for ClockType {
-    type Err = ParseError;
+    type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.chars().next() {
-            None => Err(ParseError::EmptyClockType),
+            None => Err(anyhow!("unable to find clock in/out marker")),
             Some('i' | 'I') => Ok(ClockType::In),
             Some('o' | 'O') => Ok(ClockType::Out),
-            _ => Err(ParseError::UnknownClockType),
+            Some(other) => Err(anyhow!(format!("unknown clock type: [{}]", other))),
         }
     }
-}
-
-#[derive(Debug, Clone, Error)]
-enum ParseError {
-    #[error("unable to find clock in/out marker")]
-    EmptyClockType,
-    #[error("unknown clock type")]
-    UnknownClockType,
-    #[error("unable to parse date [{0:?}]")]
-    UnparseableDate(Option<Parse>),
 }
 
 pub struct Summary {
@@ -89,7 +78,7 @@ fn find_from(s: &str, index: Option<usize>, pat: char) -> Option<usize> {
 fn parse_line(
     s: &str,
     format: &Vec<fd::FormatItem<'_>>,
-) -> Result<(ClockType, PrimitiveDateTime), ParseError> {
+) -> anyhow::Result<(ClockType, PrimitiveDateTime)> {
     let clock_type: ClockType = s[0..1].parse()?;
     let date_time_onward = &s[2..];
     let time_start_index = date_time_onward.find(SPACE).map(|t| t + 1);
@@ -97,7 +86,7 @@ fn parse_line(
         find_from(date_time_onward, time_start_index, SPACE).unwrap_or(date_time_onward.len());
     let date_time_slice = &date_time_onward[0..date_time_end];
     let date_time = parse_timestamp(date_time_slice, format)
-        .map_err(|e| ParseError::UnparseableDate(Some(e)))?;
+        .with_context(|| format!("unable to parse timestamp: [{}]", date_time_slice))?;
     Ok((clock_type, date_time))
 }
 
