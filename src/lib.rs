@@ -51,12 +51,6 @@ enum ParseError {
     UnparseableDate(Option<Parse>),
 }
 
-#[derive(Debug, Copy, Clone)]
-struct Entry {
-    clock_type: ClockType,
-    date_time: PrimitiveDateTime,
-}
-
 pub struct Summary {
     pub num_days_worked: u32,
     pub first_punchin_today: PrimitiveDateTime,
@@ -90,7 +84,10 @@ fn find_from<'a>(s: &'a str, index: Option<usize>, pat: char) -> Option<usize> {
     index.map_or(None, |i| s[i..].find(pat).map_or(None, |j| Some(i + j)))
 }
 
-fn parse_line(s: String, format: &Vec<fd::FormatItem<'_>>) -> Result<Entry, ParseError> {
+fn parse_line(
+    s: String,
+    format: &Vec<fd::FormatItem<'_>>,
+) -> Result<(ClockType, PrimitiveDateTime), ParseError> {
     let clock_type: ClockType = s[0..1].parse()?;
     let date_time_onward = &s[2..];
     let time_start_index = date_time_onward.find(SPACE).map(|t| t + 1);
@@ -99,10 +96,7 @@ fn parse_line(s: String, format: &Vec<fd::FormatItem<'_>>) -> Result<Entry, Pars
     let date_time_slice = &date_time_onward[0..date_time_end];
     let date_time = parse_timestamp(date_time_slice, &format)
         .map_err(|e| ParseError::UnparseableDate(Some(e)))?;
-    Ok(Entry {
-        clock_type,
-        date_time,
-    })
+    Ok((clock_type, date_time))
 }
 
 enum States {
@@ -118,46 +112,43 @@ where
         .with_context(|| format!("unable to read {}", filename.as_ref().to_string_lossy()))?;
     let format = create_timestampformat();
     let mut state = States::ExpectingClockIn;
-    let mut previous: Option<Entry> = None;
+    let mut clockin = PrimitiveDateTime::MIN;
     let mut worked_today: Duration = Duration::ZERO;
     let mut first_punchin_today: PrimitiveDateTime = PrimitiveDateTime::MIN;
     let mut total_worked: Duration = Duration::ZERO;
     let mut num_days_worked: u32 = 0;
     let mut line_number: usize = 0;
-    let mut last_entry: Option<Entry> = None;
-    let mut previous_date: Option<Date> = None;
+    let mut previous_date: Date = PrimitiveDateTime::MIN.date();
     for line in lines {
         line_number += 1;
         let ip = line.with_context(|| format!("failed to parse line {}", line_number))?;
         let trimmed = ip.trim().to_string();
-
         if trimmed.starts_with(COMMENT) {
             continue;
         }
-        let entry = parse_line(trimmed, &format)
+
+        let (clock_type, time_stamp) = parse_line(trimmed, &format)
             .with_context(|| format!("failed to parse line {}", line_number))?;
-        last_entry = Some(entry.clone());
-        state = (match (state, &entry.clock_type) {
+        state = (match (state, clock_type) {
             (States::ExpectingClockIn, ClockType::In) => {
-                let current_date = Some(entry.date_time.date());
+                let current_date = time_stamp.date();
                 if previous_date != current_date {
                     worked_today = Duration::ZERO;
                     num_days_worked += 1;
-                    first_punchin_today = entry.date_time;
+                    first_punchin_today = time_stamp;
                     previous_date = current_date;
                 }
-                previous = Some(entry.clone());
+                clockin = time_stamp;
                 Ok(States::ExpectingClockOut)
             }
             (States::ExpectingClockOut, ClockType::Out) => {
-                let prev = previous.unwrap();
-                if entry.date_time < prev.date_time {
+                if time_stamp < clockin {
                     bail!(
                         "clock out time before clock in time on line {}",
                         line_number
                     );
                 }
-                let clocked = entry.date_time - prev.date_time;
+                let clocked = time_stamp - clockin;
                 worked_today += clocked;
                 total_worked += clocked;
                 Ok(States::ExpectingClockIn)
@@ -172,13 +163,13 @@ where
             )),
         })?;
     }
-    match (state, last_entry) {
-        (States::ExpectingClockOut, Some(prev)) => {
+    match state {
+        States::ExpectingClockOut => {
             let now = now(&format)?;
-            if now < prev.date_time {
+            if now < clockin {
                 bail!("now is before clock in time on line {}", line_number);
             }
-            let clocked = now - prev.date_time;
+            let clocked = now - clockin;
             worked_today += clocked;
             total_worked += clocked;
         }
@@ -276,17 +267,17 @@ mod tests {
     fn should_parse_clock_in_line() {
         let format = create_timestampformat();
         let line = "i 2022/04/22 21:33:23 e:fc:fred";
-        let result = parse_line(line.to_string(), &format).unwrap();
-        assert_eq!(ClockType::In, result.clock_type);
-        assert_eq!(datetime!(2022 - 04 - 22 21:33:23), result.date_time);
+        let (clock_type, date_time) = parse_line(line.to_string(), &format).unwrap();
+        assert_eq!(ClockType::In, clock_type);
+        assert_eq!(datetime!(2022 - 04 - 22 21:33:23), date_time);
     }
 
     #[test]
     fn should_parse_clock_out_line() {
         let format = create_timestampformat();
         let line = "o 2022/04/22 21:33:33";
-        let result = parse_line(line.to_string(), &format).unwrap();
-        assert_eq!(ClockType::Out, result.clock_type);
-        assert_eq!(datetime!(2022 - 04 - 22 21:33:33), result.date_time);
+        let (clock_type, date_time) = parse_line(line.to_string(), &format).unwrap();
+        assert_eq!(ClockType::Out, clock_type);
+        assert_eq!(datetime!(2022 - 04 - 22 21:33:33), date_time);
     }
 }
