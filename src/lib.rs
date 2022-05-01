@@ -33,8 +33,8 @@ impl FromStr for ClockType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.chars().next() {
             None => Err(anyhow!("unable to find clock in/out marker")),
-            Some('i' | 'I') => Ok(ClockType::In),
-            Some('o' | 'O') => Ok(ClockType::Out),
+            Some('i' | 'I') => Ok(Self::In),
+            Some('o' | 'O') => Ok(Self::Out),
             Some(other) => Err(anyhow!(format!("unknown clock type: [{}]", other))),
         }
     }
