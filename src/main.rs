@@ -1,10 +1,9 @@
-use lib::{create_timestampformat, format_time, hours_mins, now, summarize_file, timelog_path};
+use lib::{format_time, hours_mins, now, summarize_file, timelog_path};
 
 fn main() -> anyhow::Result<()> {
     let time_log = timelog_path()?;
-    let format = create_timestampformat();
-    let now = now(&format)?;
-    let summary = summarize_file(time_log, &now, &format)?;
+    let now = now()?;
+    let summary = summarize_file(time_log, &now)?;
     println!(
         r"{:<45}{}
 {:<45}{}

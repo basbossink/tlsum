@@ -1,19 +1,14 @@
 use anyhow::{anyhow, bail, Context, Result};
-use std::env;
-use std::fs::File;
-use std::io;
-use std::io::BufRead;
-use std::path::Path;
-use std::path::PathBuf;
-use std::str::FromStr;
-use time::error::Parse;
-use time::Date;
-use time::Duration;
-use time::OffsetDateTime;
-use time::{format_description as fd, PrimitiveDateTime};
+use std::{env, fs::File, io, io::BufRead, path::Path, path::PathBuf, str::FromStr};
+use time::{
+    error::Parse, format_description as fd, format_description::FormatItem,
+    macros::format_description, Date, Duration, OffsetDateTime, PrimitiveDateTime,
+};
 
 /// This is the default timestamp format used by Emacs.
-const TIMESTAMP_FORMAT: &str = "[year]/[month]/[day] [hour repr:24]:[minute]:[second]";
+const TIMESTAMP_FORMAT: &[FormatItem<'static>] =
+    format_description!("[year]/[month]/[day] [hour repr:24]:[minute]:[second]");
+
 const SPACE: char = ' ';
 const TIMELOG_ENV_VAR_NAME: &str = "TIMELOG";
 const COMMENT: char = '#';
@@ -102,17 +97,14 @@ fn find_from(s: &str, index: Option<usize>, pat: char) -> Option<usize> {
 }
 
 #[must_use]
-fn parse_line(
-    s: &str,
-    format: &Vec<fd::FormatItem<'_>>,
-) -> anyhow::Result<(ClockType, PrimitiveDateTime)> {
+fn parse_line(s: &str) -> anyhow::Result<(ClockType, PrimitiveDateTime)> {
     let clock_type: ClockType = s[0..1].parse()?;
     let date_time_onward = &s[2..];
     let time_start_index = date_time_onward.find(SPACE).map(|t| t + 1);
     let date_time_end =
         find_from(date_time_onward, time_start_index, SPACE).unwrap_or(date_time_onward.len());
     let date_time_slice = &date_time_onward[0..date_time_end];
-    let date_time = parse_timestamp(date_time_slice, format)
+    let date_time = parse_timestamp(date_time_slice)
         .with_context(|| format!("unable to parse timestamp: [{}]", date_time_slice))?;
     Ok((clock_type, date_time))
 }
@@ -123,11 +115,7 @@ enum States {
 }
 
 #[must_use]
-fn summarize_lines(
-    reader: Box<dyn BufRead>,
-    now: &PrimitiveDateTime,
-    format: &Vec<fd::FormatItem<'_>>,
-) -> anyhow::Result<Summary> {
+fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow::Result<Summary> {
     let lines = reader.lines();
     let mut state = States::ExpectingClockIn;
     let mut clockin = PrimitiveDateTime::MIN;
@@ -145,7 +133,7 @@ fn summarize_lines(
             continue;
         }
 
-        let (clock_type, time_stamp) = parse_line(&trimmed, &format)
+        let (clock_type, time_stamp) = parse_line(&trimmed)
             .with_context(|| format!("failed to parse line {}", line_number))?;
         state = (match (state, clock_type) {
             (States::ExpectingClockIn, ClockType::In) => {
@@ -200,17 +188,13 @@ fn summarize_lines(
 }
 
 #[must_use]
-pub fn summarize_file<P>(
-    filename: P,
-    now: &PrimitiveDateTime,
-    format: &Vec<fd::FormatItem<'_>>,
-) -> anyhow::Result<Summary>
+pub fn summarize_file<P>(filename: P, now: &PrimitiveDateTime) -> anyhow::Result<Summary>
 where
     P: AsRef<Path>,
 {
     let file = File::open(&filename)
         .with_context(|| format!("unable to read {}", &filename.as_ref().to_string_lossy()))?;
-    summarize_lines(Box::new(io::BufReader::new(file)), now, format)
+    summarize_lines(Box::new(io::BufReader::new(file)), now)
 }
 
 #[must_use]
@@ -231,23 +215,15 @@ pub fn hours_mins(duration: Duration) -> String {
 }
 
 #[must_use]
-pub fn now(format: &Vec<fd::FormatItem<'_>>) -> anyhow::Result<PrimitiveDateTime> {
+pub fn now() -> anyhow::Result<PrimitiveDateTime> {
     let now: PrimitiveDateTime =
-        parse_timestamp(&OffsetDateTime::now_local()?.format(format)?, format)?;
+        parse_timestamp(&OffsetDateTime::now_local()?.format(TIMESTAMP_FORMAT)?)?;
     Ok(now)
 }
 
 #[must_use]
-fn parse_timestamp(
-    date_time: &str,
-    format: &Vec<fd::FormatItem<'_>>,
-) -> Result<PrimitiveDateTime, Parse> {
-    PrimitiveDateTime::parse(date_time, format)
-}
-
-#[must_use]
-pub fn create_timestampformat() -> Vec<fd::FormatItem<'static>> {
-    fd::parse(TIMESTAMP_FORMAT).unwrap()
+fn parse_timestamp(date_time: &str) -> Result<PrimitiveDateTime, Parse> {
+    PrimitiveDateTime::parse(date_time, TIMESTAMP_FORMAT)
 }
 
 #[cfg(test)]
@@ -260,8 +236,7 @@ mod tests {
 
         #[test]
         fn should_parse_to_primitive_datetime() {
-            let format = create_timestampformat();
-            let result = parse_timestamp("2022/04/22 21:33:23", &format).unwrap();
+            let result = parse_timestamp("2022/04/22 21:33:23").unwrap();
             assert_eq!(2022, result.year());
             assert_eq!(Month::April, result.month());
             assert_eq!(22, result.day());
@@ -275,18 +250,16 @@ mod tests {
 
         #[test]
         fn should_parse_clock_in_line() {
-            let format = create_timestampformat();
             let line = "i 2022/04/22 21:33:23 e:fc:fred";
-            let (clock_type, date_time) = parse_line(line, &format).unwrap();
+            let (clock_type, date_time) = parse_line(line).unwrap();
             assert_eq!(ClockType::In, clock_type);
             assert_eq!(datetime!(2022 - 04 - 22 21:33:23), date_time);
         }
 
         #[test]
         fn should_parse_clock_out_line() {
-            let format = create_timestampformat();
             let line = "o 2022/04/22 21:33:33";
-            let (clock_type, date_time) = parse_line(line, &format).unwrap();
+            let (clock_type, date_time) = parse_line(line).unwrap();
             assert_eq!(ClockType::Out, clock_type);
             assert_eq!(datetime!(2022 - 04 - 22 21:33:33), date_time);
         }
@@ -399,8 +372,7 @@ mod tests {
             let content = "i 2022/01/01 09:00:00 fred:flintstone";
             let now = datetime!(2022 - 01 - 01 12:00:00);
             let reader = create_reader(content);
-            let format = create_timestampformat();
-            let result = sut(reader, &now, &format).unwrap();
+            let result = sut(reader, &now).unwrap();
             assert_eq!(result.total_worked, Duration::hours(3i64));
             assert_eq!(result.worked_today, Duration::hours(3i64));
         }
@@ -411,8 +383,7 @@ mod tests {
 o 2022/01/01 11:00:00";
             let now = datetime!(2022 - 01 - 01 12:00:00);
             let reader = create_reader(content);
-            let format = create_timestampformat();
-            let result = sut(reader, &now, &format).unwrap();
+            let result = sut(reader, &now).unwrap();
             assert_eq!(result.total_worked, Duration::hours(2i64));
             assert_eq!(result.worked_today, Duration::hours(2i64));
         }
