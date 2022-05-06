@@ -128,7 +128,7 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
     for line in lines {
         line_number += 1;
         let ip = line.with_context(|| format!("failed to read line {}", line_number))?;
-        let trimmed = ip.trim().to_owned();
+        let trimmed = ip.trim();
         if trimmed.starts_with(COMMENT) {
             continue;
         }
