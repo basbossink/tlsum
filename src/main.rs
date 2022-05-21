@@ -1,5 +1,11 @@
 use lib::{format_time, hours_mins, now, summarize_file, timelog_path};
 
+const UNDEFINED_CHAR_REPRESENTATION: char = '⊥';
+
+fn represent_as_undefined() -> anyhow::Result<String> {
+    Ok(format!("{}", UNDEFINED_CHAR_REPRESENTATION))
+}
+
 fn main() -> anyhow::Result<()> {
     let time_log = timelog_path()?;
     let now = now()?;
@@ -24,7 +30,7 @@ fn main() -> anyhow::Result<()> {
         "Cummulative overtime per yesterday:",
         hours_mins(summary.overtime),
         "First punch in today:",
-        format_time(summary.first_punchin_today),
+        format_time(summary.first_punchin_today)?,
         "Worked today:",
         hours_mins(summary.worked_today),
         "Still to work (8hrs):",
@@ -32,9 +38,13 @@ fn main() -> anyhow::Result<()> {
         "Still to work:",
         hours_mins(summary.still_to_work),
         "Time to leave (8hrs):",
-        format_time(summary.time_to_leave_8),
+        summary
+            .time_to_leave_8
+            .map_or_else(represent_as_undefined, format_time)?,
         "Time to leave:",
-        format_time(summary.time_to_leave),
+        summary
+            .time_to_leave
+            .map_or_else(represent_as_undefined, format_time)?,
     );
     Ok(())
 }

@@ -1,13 +1,15 @@
 use anyhow::{anyhow, bail, Context, Result};
 use std::{env, fs::File, io, io::BufRead, path::Path, path::PathBuf, str::FromStr};
 use time::{
-    error::Parse, format_description as fd, format_description::FormatItem,
-    macros::format_description, Date, Duration, OffsetDateTime, PrimitiveDateTime,
+    error::Parse, format_description::FormatItem, macros::format_description, Date, Duration,
+    OffsetDateTime, PrimitiveDateTime,
 };
 
 /// This is the default timestamp format used by Emacs.
 const TIMESTAMP_FORMAT: &[FormatItem<'static>] =
     format_description!("[year]/[month]/[day] [hour repr:24]:[minute]:[second]");
+
+const HOUR_MINUTE_FORMAT: &[FormatItem<'static>] = format_description!("[hour]:[minute]");
 
 const SPACE: char = ' ';
 const TIMELOG_ENV_VAR_NAME: &str = "TIMELOG";
@@ -42,8 +44,8 @@ pub struct Summary {
     pub overtime: Duration,
     pub still_to_work_8: Duration,
     pub still_to_work: Duration,
-    pub time_to_leave: PrimitiveDateTime,
-    pub time_to_leave_8: PrimitiveDateTime,
+    pub time_to_leave: Option<PrimitiveDateTime>,
+    pub time_to_leave_8: Option<PrimitiveDateTime>,
     pub total_worked: Duration,
     pub worked_today: Duration,
 }
@@ -56,6 +58,7 @@ impl Summary {
         total_worked: Duration,
         num_days_worked: u32,
         now: &PrimitiveDateTime,
+        clocked_in: bool,
     ) -> Self {
         let avg_worked = total_worked / num_days_worked;
         let total_worked_until_prev = total_worked - worked_today;
@@ -63,9 +66,9 @@ impl Summary {
             total_worked_until_prev - ((num_days_worked - 1_u32) * 8_u32 * Duration::HOUR);
         let still_to_work_8 = (8_u32 * Duration::HOUR) - worked_today;
         let still_to_work = still_to_work_8 - overtime;
-        let time_to_leave = *now + still_to_work;
-        let time_to_leave_8 = *now + still_to_work_8;
-        Summary {
+        let time_to_leave = clocked_in.then(|| *now + still_to_work);
+        let time_to_leave_8 = clocked_in.then(|| *now + still_to_work_8);
+        Self {
             num_days_worked,
             first_punchin_today,
             avg_worked,
@@ -80,7 +83,7 @@ impl Summary {
     }
 }
 
-#[must_use]
+#[inline]
 pub fn timelog_path() -> Result<PathBuf> {
     let time_log = env::var_os(TIMELOG_ENV_VAR_NAME)
         .map_or_else(|| PathBuf::from(DEFAULT_TIMELOG_PATH), PathBuf::from);
@@ -96,25 +99,24 @@ fn find_from(s: &str, index: Option<usize>, pat: char) -> Option<usize> {
     index.and_then(|i| s[i..].find(pat).map(|j| i + j))
 }
 
-#[must_use]
 fn parse_line(s: &str) -> anyhow::Result<(ClockType, PrimitiveDateTime)> {
-    let clock_type: ClockType = s[0..1].parse()?;
+    let clock_type: ClockType = s[..1].parse()?;
     let date_time_onward = &s[2..];
     let time_start_index = date_time_onward.find(SPACE).map(|t| t + 1);
     let date_time_end =
         find_from(date_time_onward, time_start_index, SPACE).unwrap_or(date_time_onward.len());
-    let date_time_slice = &date_time_onward[0..date_time_end];
+    let date_time_slice = &date_time_onward[..date_time_end];
     let date_time = parse_timestamp(date_time_slice)
         .with_context(|| format!("unable to parse timestamp: [{}]", date_time_slice))?;
     Ok((clock_type, date_time))
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum States {
     ExpectingClockIn,
     ExpectingClockOut,
 }
 
-#[must_use]
 fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow::Result<Summary> {
     let lines = reader.lines();
     let mut state = States::ExpectingClockIn;
@@ -133,8 +135,8 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
             continue;
         }
 
-        let (clock_type, time_stamp) = parse_line(&trimmed)
-            .with_context(|| format!("failed to parse line {}", line_number))?;
+        let (clock_type, time_stamp) =
+            parse_line(trimmed).with_context(|| format!("failed to parse line {}", line_number))?;
         state = (match (state, clock_type) {
             (States::ExpectingClockIn, ClockType::In) => {
                 let current_date = time_stamp.date();
@@ -169,7 +171,8 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
             )),
         })?;
     }
-    if let States::ExpectingClockOut = state {
+    let clocked_in = States::ExpectingClockOut == state;
+    if clocked_in {
         if now < &clockin {
             bail!("now is before clock in time on line {}", line_number);
         }
@@ -182,12 +185,13 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
         first_punchin_today,
         total_worked,
         num_days_worked,
-        &now,
+        now,
+        clocked_in,
     );
     Ok(summary)
 }
 
-#[must_use]
+#[inline]
 pub fn summarize_file<P>(filename: P, now: &PrimitiveDateTime) -> anyhow::Result<Summary>
 where
     P: AsRef<Path>,
@@ -197,13 +201,16 @@ where
     summarize_lines(Box::new(io::BufReader::new(file)), now)
 }
 
-#[must_use]
-pub fn format_time(date_time: PrimitiveDateTime) -> String {
-    let format = fd::parse("[hour]:[minute]").unwrap();
-    date_time.time().format(&format).unwrap()
+#[inline]
+pub fn format_time(date_time: PrimitiveDateTime) -> anyhow::Result<String> {
+    date_time
+        .time()
+        .format(HOUR_MINUTE_FORMAT)
+        .context("unable to format time")
 }
 
 #[must_use]
+#[inline]
 pub fn hours_mins(duration: Duration) -> String {
     let hours = duration.whole_hours();
     format!(
@@ -214,14 +221,13 @@ pub fn hours_mins(duration: Duration) -> String {
     )
 }
 
-#[must_use]
+#[inline]
 pub fn now() -> anyhow::Result<PrimitiveDateTime> {
     let now: PrimitiveDateTime =
         parse_timestamp(&OffsetDateTime::now_local()?.format(TIMESTAMP_FORMAT)?)?;
     Ok(now)
 }
 
-#[must_use]
 fn parse_timestamp(date_time: &str) -> Result<PrimitiveDateTime, Parse> {
     PrimitiveDateTime::parse(date_time, TIMESTAMP_FORMAT)
 }
@@ -275,12 +281,13 @@ mod tests {
             total_worked: Duration,
             num_days_worked: u32,
             now: PrimitiveDateTime,
+            clocked_in: bool,
             expected_overtime: Duration,
             expected_avg_worked: Duration,
             expected_still_to_work: Duration,
             expected_still_to_work_8: Duration,
-            expected_time_to_leave: PrimitiveDateTime,
-            expected_time_to_leave_8: PrimitiveDateTime,
+            expected_time_to_leave: Option<PrimitiveDateTime>,
+            expected_time_to_leave_8: Option<PrimitiveDateTime>,
         }
 
         fn aaa_summary_new(tc: &SummaryNewTestCase) {
@@ -290,6 +297,7 @@ mod tests {
                 tc.total_worked,
                 tc.num_days_worked,
                 &tc.now,
+                tc.clocked_in,
             );
             assert_eq!(result.num_days_worked, tc.num_days_worked);
             assert_eq!(result.first_punchin_today, tc.first_punchin_today);
@@ -310,12 +318,13 @@ mod tests {
                 first_punchin_today: datetime!(2022 - 04 - 22 06:33:33),
                 total_worked: Duration::hours(3_i64),
                 num_days_worked: 1u32,
+                clocked_in: true,
                 expected_overtime: Duration::ZERO,
                 expected_avg_worked: Duration::hours(3_i64),
                 expected_still_to_work: Duration::hours(5_i64),
                 expected_still_to_work_8: Duration::hours(5_i64),
-                expected_time_to_leave: datetime!(2022 - 04 - 22 14:33:33),
-                expected_time_to_leave_8: datetime!(2022 - 04 - 22 14:33:33),
+                expected_time_to_leave: Some(datetime!(2022 - 04 - 22 14:33:33)),
+                expected_time_to_leave_8: Some(datetime!(2022 - 04 - 22 14:33:33)),
             };
             aaa_summary_new(&tc);
         }
@@ -328,12 +337,13 @@ mod tests {
                 first_punchin_today: datetime!(2022 - 04 - 22 06:33:33),
                 total_worked: Duration::hours(12_i64),
                 num_days_worked: 2u32,
+                clocked_in: true,
                 expected_overtime: Duration::hours(1_i64),
                 expected_avg_worked: Duration::hours(6_i64),
                 expected_still_to_work: Duration::hours(4_i64),
                 expected_still_to_work_8: Duration::hours(5_i64),
-                expected_time_to_leave: datetime!(2022 - 04 - 22 13:33:33),
-                expected_time_to_leave_8: datetime!(2022 - 04 - 22 14:33:33),
+                expected_time_to_leave: Some(datetime!(2022 - 04 - 22 13:33:33)),
+                expected_time_to_leave_8: Some(datetime!(2022 - 04 - 22 14:33:33)),
             };
             aaa_summary_new(&tc);
         }
@@ -346,12 +356,32 @@ mod tests {
                 first_punchin_today: datetime!(2022 - 04 - 22 06:33:33),
                 total_worked: Duration::hours(8_i64),
                 num_days_worked: 2u32,
+                clocked_in: true,
                 expected_overtime: Duration::hours(-3_i64),
                 expected_avg_worked: Duration::hours(4_i64),
                 expected_still_to_work: Duration::hours(8_i64),
                 expected_still_to_work_8: Duration::hours(5_i64),
-                expected_time_to_leave: datetime!(2022 - 04 - 22 17:33:33),
-                expected_time_to_leave_8: datetime!(2022 - 04 - 22 14:33:33),
+                expected_time_to_leave: Some(datetime!(2022 - 04 - 22 17:33:33)),
+                expected_time_to_leave_8: Some(datetime!(2022 - 04 - 22 14:33:33)),
+            };
+            aaa_summary_new(&tc);
+        }
+
+        #[test]
+        fn summary_new_last_state_is_clocked_out() {
+            let tc = SummaryNewTestCase {
+                now: datetime!(2022 - 04 - 22 09:33:33),
+                worked_today: Duration::hours(3_i64),
+                first_punchin_today: datetime!(2022 - 04 - 22 06:33:33),
+                total_worked: Duration::hours(8_i64),
+                num_days_worked: 2u32,
+                clocked_in: false,
+                expected_overtime: Duration::hours(-3_i64),
+                expected_avg_worked: Duration::hours(4_i64),
+                expected_still_to_work: Duration::hours(8_i64),
+                expected_still_to_work_8: Duration::hours(5_i64),
+                expected_time_to_leave: None,
+                expected_time_to_leave_8: None,
             };
             aaa_summary_new(&tc);
         }
@@ -361,6 +391,7 @@ mod tests {
         use super::*;
         use std::io::{BufReader, Cursor};
         use time::macros::datetime;
+
         fn create_reader(s: &'static str) -> Box<dyn BufRead> {
             let buff = Cursor::new(s);
             let reader = BufReader::new(buff);
@@ -386,6 +417,8 @@ o 2022/01/01 11:00:00";
             let result = sut(reader, &now).unwrap();
             assert_eq!(result.total_worked, Duration::hours(2i64));
             assert_eq!(result.worked_today, Duration::hours(2i64));
+            assert_eq!(result.time_to_leave, None);
+            assert_eq!(result.time_to_leave_8, None);
         }
     }
 }
