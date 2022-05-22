@@ -94,18 +94,29 @@ pub fn timelog_path() -> Result<PathBuf> {
     }
 }
 
-#[must_use]
-fn find_from(s: &str, index: Option<usize>, pat: char) -> Option<usize> {
-    index.and_then(|i| s[i..].find(pat).map(|j| i + j))
+fn find_from(s: &str, index: usize, pat: char) -> anyhow::Result<usize> {
+    let rest = s
+        .get(index..)
+        .ok_or_else(|| anyhow::anyhow!(format!("expected slice with size > {index}")))?;
+    Ok(rest.find(pat).map_or_else(|| s.len(), |j| index + j))
 }
 
 fn parse_line(s: &str) -> anyhow::Result<(ClockType, PrimitiveDateTime)> {
-    let clock_type: ClockType = s[..1].parse()?;
-    let date_time_onward = &s[2..];
-    let time_start_index = date_time_onward.find(SPACE).map(|t| t + 1);
-    let date_time_end =
-        find_from(date_time_onward, time_start_index, SPACE).unwrap_or(date_time_onward.len());
-    let date_time_slice = &date_time_onward[..date_time_end];
+    let clock_type_slice = s
+        .get(..1)
+        .ok_or_else(|| anyhow::anyhow!("got empty slice, expected 'i'| 'o'"))?;
+    let clock_type: ClockType = clock_type_slice.parse()?;
+    let date_time_onward = s
+        .get(2..)
+        .ok_or_else(|| anyhow::anyhow!("expected date, found nothing"))?;
+    let time_start_index = date_time_onward
+        .find(SPACE)
+        .map(|t| t + 1)
+        .ok_or_else(|| anyhow::anyhow!("expected date and time separated by a space"))?;
+    let date_time_end = find_from(date_time_onward, time_start_index, SPACE)?;
+    let date_time_slice = date_time_onward
+        .get(..date_time_end)
+        .ok_or_else(|| anyhow::anyhow!(format!("expected slice with size {date_time_end}")))?;
     let date_time = parse_timestamp(date_time_slice)
         .with_context(|| format!("unable to parse timestamp: [{}]", date_time_slice))?;
     Ok((clock_type, date_time))
@@ -131,7 +142,7 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
         line_number += 1;
         let ip = line.with_context(|| format!("failed to read line {}", line_number))?;
         let trimmed = ip.trim();
-        if trimmed.starts_with(COMMENT) {
+        if trimmed.starts_with(COMMENT) || trimmed.is_empty() {
             continue;
         }
 

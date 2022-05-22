@@ -1,15 +1,13 @@
 use lib::{format_time, hours_mins, now, summarize_file, timelog_path};
 
-const UNDEFINED_CHAR_REPRESENTATION: char = '⊥';
+const UNDEFINED_CHAR_REPRESENTATION: char = '\u{22a5}';
 
-fn represent_as_undefined() -> anyhow::Result<String> {
-    Ok(format!("{}", UNDEFINED_CHAR_REPRESENTATION))
-}
-
+#[allow(clippy::print_stdout)]
 fn main() -> anyhow::Result<()> {
     let time_log = timelog_path()?;
     let now = now()?;
     let summary = summarize_file(time_log, &now)?;
+    let undefined = || Ok(format!("{}", UNDEFINED_CHAR_REPRESENTATION));
     println!(
         r"{:<45}{}
 {:<45}{}
@@ -40,11 +38,9 @@ fn main() -> anyhow::Result<()> {
         "Time to leave (8hrs):",
         summary
             .time_to_leave_8
-            .map_or_else(represent_as_undefined, format_time)?,
+            .map_or_else(undefined, format_time)?,
         "Time to leave:",
-        summary
-            .time_to_leave
-            .map_or_else(represent_as_undefined, format_time)?,
+        summary.time_to_leave.map_or_else(undefined, format_time)?,
     );
     Ok(())
 }
