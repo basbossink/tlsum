@@ -1,5 +1,14 @@
 use anyhow::{anyhow, bail, Context, Result};
-use std::{env, fs::File, io, io::BufRead, path::Path, path::PathBuf, str::FromStr};
+use std::{
+    env,
+    fs::File,
+    io,
+    io::BufRead,
+    ops::{Range, RangeTo},
+    path::Path,
+    path::PathBuf,
+    str::FromStr,
+};
 use time::{
     error::Parse, format_description::FormatItem, macros::format_description, Date, Duration,
     OffsetDateTime, PrimitiveDateTime,
@@ -8,15 +17,19 @@ use time::{
 /// This is the default timestamp format used by Emacs.
 const TIMESTAMP_FORMAT: &[FormatItem<'static>] =
     format_description!("[year]/[month]/[day] [hour repr:24]:[minute]:[second]");
-
 const HOUR_MINUTE_FORMAT: &[FormatItem<'static>] = format_description!("[hour]:[minute]");
 
-const SPACE: char = ' ';
 const TIMELOG_ENV_VAR_NAME: &str = "TIMELOG";
 const COMMENT: char = '#';
 
 /// The default file path Emacs uses to record timeclock-in|out records.
 const DEFAULT_TIMELOG_PATH: &str = ".emacs.d/.local/etc/timelog";
+
+//           1         2
+// 012345678901234567890123456
+// i 2022/04/22 21:33:23 e:fc:fred
+const CLOCK_TYPE_RANGE: RangeTo<usize> = ..1;
+const DATE_TIME_RANGE: Range<usize> = 2..21;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 enum ClockType {
@@ -94,29 +107,15 @@ pub fn timelog_path() -> Result<PathBuf> {
     }
 }
 
-fn find_from(s: &str, index: usize, pat: char) -> anyhow::Result<usize> {
-    let rest = s
-        .get(index..)
-        .ok_or_else(|| anyhow::anyhow!(format!("expected slice with size > {index}")))?;
-    Ok(rest.find(pat).map_or_else(|| s.len(), |j| index + j))
-}
-
+#[inline]
 fn parse_line(s: &str) -> anyhow::Result<(ClockType, PrimitiveDateTime)> {
     let clock_type_slice = s
-        .get(..1)
+        .get(CLOCK_TYPE_RANGE)
         .ok_or_else(|| anyhow::anyhow!("got empty slice, expected 'i'| 'o'"))?;
     let clock_type: ClockType = clock_type_slice.parse()?;
-    let date_time_onward = s
-        .get(2..)
-        .ok_or_else(|| anyhow::anyhow!("expected date, found nothing"))?;
-    let time_start_index = date_time_onward
-        .find(SPACE)
-        .map(|t| t + 1)
-        .ok_or_else(|| anyhow::anyhow!("expected date and time separated by a space"))?;
-    let date_time_end = find_from(date_time_onward, time_start_index, SPACE)?;
-    let date_time_slice = date_time_onward
-        .get(..date_time_end)
-        .ok_or_else(|| anyhow::anyhow!(format!("expected slice with size {date_time_end}")))?;
+    let date_time_slice = s
+        .get(DATE_TIME_RANGE)
+        .ok_or_else(|| anyhow::anyhow!(format!("expected slice with size 18")))?;
     let date_time = parse_timestamp(date_time_slice)
         .with_context(|| format!("unable to parse timestamp: [{}]", date_time_slice))?;
     Ok((clock_type, date_time))
@@ -141,13 +140,12 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
     for line in lines {
         line_number += 1;
         let ip = line.with_context(|| format!("failed to read line {}", line_number))?;
-        let trimmed = ip.trim();
-        if trimmed.starts_with(COMMENT) || trimmed.is_empty() {
+        if ip.starts_with(COMMENT) || ip.is_empty() {
             continue;
         }
 
         let (clock_type, time_stamp) =
-            parse_line(trimmed).with_context(|| format!("failed to parse line {}", line_number))?;
+            parse_line(&ip).with_context(|| format!("failed to parse line {}", line_number))?;
         state = (match (state, clock_type) {
             (States::ExpectingClockIn, ClockType::In) => {
                 let current_date = time_stamp.date();
@@ -209,7 +207,10 @@ where
 {
     let file = File::open(&filename)
         .with_context(|| format!("unable to read {}", &filename.as_ref().to_string_lossy()))?;
-    summarize_lines(Box::new(io::BufReader::new(file)), now)
+    summarize_lines(
+        Box::new(io::BufReader::with_capacity(512 * 1024, file)),
+        now,
+    )
 }
 
 #[inline]
@@ -397,6 +398,7 @@ mod tests {
             aaa_summary_new(&tc);
         }
     }
+
     mod summarize_lines {
         use super::summarize_lines as sut;
         use super::*;
