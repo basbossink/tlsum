@@ -107,7 +107,6 @@ pub fn timelog_path() -> Result<PathBuf> {
     }
 }
 
-#[inline]
 fn parse_line(s: &str) -> anyhow::Result<(ClockType, PrimitiveDateTime)> {
     let clock_type_slice = s
         .get(CLOCK_TYPE_RANGE)
