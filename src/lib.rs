@@ -179,8 +179,8 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
             )),
         })?;
     }
-    let clocked_in = States::ExpectingClockOut == state;
-    if clocked_in {
+    let currently_clocked_in = States::ExpectingClockOut == state;
+    if currently_clocked_in {
         if now < &clockin {
             bail!("now is before clock in time on line {}", line_number);
         }
@@ -189,12 +189,16 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
         total_worked += clocked;
     }
     let summary = Summary::new(
-        worked_today,
+        if clockin.date() == now.date() {
+            worked_today
+        } else {
+            Duration::ZERO
+        },
         first_punchin_today,
         total_worked,
         num_days_worked,
         now,
-        clocked_in,
+        currently_clocked_in,
     );
     Ok(summary)
 }
