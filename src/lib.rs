@@ -17,7 +17,7 @@ use time::{
 /// This is the default timestamp format used by Emacs.
 const TIMESTAMP_FORMAT: &[FormatItem<'static>] =
     format_description!("[year]/[month]/[day] [hour repr:24]:[minute]:[second]");
-const HOUR_MINUTE_FORMAT: &[FormatItem<'static>] = format_description!("[hour]:[minute]");
+const HOUR_MINUTE_FORMAT: &[FormatItem<'static>] = format_description!("[hour]:[minute]:[second]");
 
 const TIMELOG_ENV_VAR_NAME: &str = "TIMELOG";
 const COMMENT: char = '#';
