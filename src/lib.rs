@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use std::{
+    cmp::max,
     env,
     fs::File,
     io,
@@ -17,7 +18,10 @@ use time::{
 /// This is the default timestamp format used by Emacs.
 const TIMESTAMP_FORMAT: &[FormatItem<'static>] =
     format_description!("[year]/[month]/[day] [hour repr:24]:[minute]:[second]");
-const HOUR_MINUTE_FORMAT: &[FormatItem<'static>] = format_description!("[hour]:[minute]:[second]");
+const HOUR_MINUTE_FORMAT: &[FormatItem<'static>] =
+    format_description!("[hour repr:24]:[minute]:[second]");
+const DATE_TIME_FORMAT: &[FormatItem<'static>] =
+    format_description!("[hour repr:24]:[minute]:[second]  [year]/[month]/[day]");
 
 const TIMELOG_ENV_VAR_NAME: &str = "TIMELOG";
 const COMMENT: char = '#';
@@ -51,12 +55,14 @@ impl FromStr for ClockType {
 }
 
 pub struct Summary {
-    pub num_days_worked: u32,
-    pub first_punchin_today: PrimitiveDateTime,
     pub avg_worked: Duration,
+    pub first_punchin_today: PrimitiveDateTime,
+    pub last_punchin: PrimitiveDateTime,
+    pub last_punchout: PrimitiveDateTime,
+    pub num_days_worked: u32,
     pub overtime: Duration,
-    pub still_to_work_8: Duration,
     pub still_to_work: Duration,
+    pub still_to_work_8: Duration,
     pub time_to_leave: Option<PrimitiveDateTime>,
     pub time_to_leave_8: Option<PrimitiveDateTime>,
     pub total_worked: Duration,
@@ -68,6 +74,8 @@ impl Summary {
     fn new(
         worked_today: Duration,
         first_punchin_today: PrimitiveDateTime,
+        last_punchin: PrimitiveDateTime,
+        last_punchout: PrimitiveDateTime,
         total_worked: Duration,
         num_days_worked: u32,
         now: &PrimitiveDateTime,
@@ -82,12 +90,14 @@ impl Summary {
         let time_to_leave = clocked_in.then(|| *now + still_to_work);
         let time_to_leave_8 = clocked_in.then(|| *now + still_to_work_8);
         Self {
-            num_days_worked,
-            first_punchin_today,
             avg_worked,
+            first_punchin_today,
+            last_punchin,
+            last_punchout,
+            num_days_worked,
             overtime,
-            still_to_work_8,
             still_to_work,
+            still_to_work_8,
             time_to_leave,
             time_to_leave_8,
             total_worked,
@@ -132,6 +142,8 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
     let mut clockin = PrimitiveDateTime::MIN;
     let mut worked_today: Duration = Duration::ZERO;
     let mut first_punchin_today: PrimitiveDateTime = PrimitiveDateTime::MIN;
+    let mut last_punchout: PrimitiveDateTime = PrimitiveDateTime::MIN;
+    let mut last_punchin: PrimitiveDateTime = PrimitiveDateTime::MIN;
     let mut total_worked: Duration = Duration::ZERO;
     let mut num_days_worked: u32 = 0;
     let mut line_number: usize = 0;
@@ -155,6 +167,7 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
                     previous_date = current_date;
                 }
                 clockin = time_stamp;
+                last_punchin = max(last_punchin, time_stamp);
                 Ok(States::ExpectingClockOut)
             }
             (States::ExpectingClockOut, ClockType::Out) => {
@@ -167,6 +180,7 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
                 let clocked = time_stamp - clockin;
                 worked_today += clocked;
                 total_worked += clocked;
+                last_punchout = max(last_punchout, time_stamp);
                 Ok(States::ExpectingClockIn)
             }
             (States::ExpectingClockIn, ClockType::Out) => Err(anyhow!(
@@ -195,6 +209,8 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
             Duration::ZERO
         },
         first_punchin_today,
+        last_punchin,
+        last_punchout,
         total_worked,
         num_days_worked,
         now,
@@ -224,14 +240,20 @@ pub fn format_time(date_time: PrimitiveDateTime) -> anyhow::Result<String> {
         .context("unable to format time")
 }
 
+#[inline]
+pub fn format_date_time(date_time: PrimitiveDateTime) -> anyhow::Result<String> {
+    date_time
+        .format(DATE_TIME_FORMAT)
+        .context("unable to format time")
+}
+
 #[must_use]
 #[inline]
 pub fn hours_mins(duration: Duration) -> String {
     let hours = duration.whole_hours();
     format!(
-        "{}{} hours, {} minutes",
-        if duration.is_negative() { "-" } else { "" },
-        i64::abs(hours),
+        "{: <5} hours, {: <5} minutes",
+        hours,
         i64::abs((duration - Duration::hours(hours)).whole_minutes())
     )
 }
@@ -293,6 +315,8 @@ mod tests {
         struct SummaryNewTestCase {
             worked_today: Duration,
             first_punchin_today: PrimitiveDateTime,
+            last_punchin: PrimitiveDateTime,
+            last_punchout: PrimitiveDateTime,
             total_worked: Duration,
             num_days_worked: u32,
             now: PrimitiveDateTime,
@@ -309,6 +333,8 @@ mod tests {
             let result = Summary::new(
                 tc.worked_today,
                 tc.first_punchin_today,
+                tc.last_punchin,
+                tc.last_punchout,
                 tc.total_worked,
                 tc.num_days_worked,
                 &tc.now,
@@ -331,6 +357,8 @@ mod tests {
                 now: datetime!(2022 - 04 - 22 09:33:33),
                 worked_today: Duration::hours(3_i64),
                 first_punchin_today: datetime!(2022 - 04 - 22 06:33:33),
+                last_punchin: datetime!(2022 - 04 - 22 12:33:33),
+                last_punchout: datetime!(2022 - 04 - 22 12:00:33),
                 total_worked: Duration::hours(3_i64),
                 num_days_worked: 1u32,
                 clocked_in: true,
@@ -350,6 +378,8 @@ mod tests {
                 now: datetime!(2022 - 04 - 22 09:33:33),
                 worked_today: Duration::hours(3_i64),
                 first_punchin_today: datetime!(2022 - 04 - 22 06:33:33),
+                last_punchin: datetime!(2022 - 04 - 22 12:33:33),
+                last_punchout: datetime!(2022 - 04 - 22 12:00:33),
                 total_worked: Duration::hours(12_i64),
                 num_days_worked: 2u32,
                 clocked_in: true,
@@ -369,6 +399,8 @@ mod tests {
                 now: datetime!(2022 - 04 - 22 09:33:33),
                 worked_today: Duration::hours(3_i64),
                 first_punchin_today: datetime!(2022 - 04 - 22 06:33:33),
+                last_punchin: datetime!(2022 - 04 - 22 12:33:33),
+                last_punchout: datetime!(2022 - 04 - 22 12:00:33),
                 total_worked: Duration::hours(8_i64),
                 num_days_worked: 2u32,
                 clocked_in: true,
@@ -388,6 +420,8 @@ mod tests {
                 now: datetime!(2022 - 04 - 22 09:33:33),
                 worked_today: Duration::hours(3_i64),
                 first_punchin_today: datetime!(2022 - 04 - 22 06:33:33),
+                last_punchin: datetime!(2022 - 04 - 22 12:33:33),
+                last_punchout: datetime!(2022 - 04 - 22 12:00:33),
                 total_worked: Duration::hours(8_i64),
                 num_days_worked: 2u32,
                 clocked_in: false,
