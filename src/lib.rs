@@ -55,10 +55,10 @@ impl FromStr for ClockType {
 }
 
 pub struct Summary {
-    pub avg_worked: Duration,
-    pub first_punchin_today: PrimitiveDateTime,
-    pub last_punchin: PrimitiveDateTime,
-    pub last_punchout: PrimitiveDateTime,
+    pub avg_worked: Option<Duration>,
+    pub first_punchin_today: Option<PrimitiveDateTime>,
+    pub last_punchin: Option<PrimitiveDateTime>,
+    pub last_punchout: Option<PrimitiveDateTime>,
     pub num_days_worked: u32,
     pub overtime: Duration,
     pub still_to_work: Duration,
@@ -73,18 +73,21 @@ impl Summary {
     #[must_use]
     fn new(
         worked_today: Duration,
-        first_punchin_today: PrimitiveDateTime,
-        last_punchin: PrimitiveDateTime,
-        last_punchout: PrimitiveDateTime,
+        first_punchin_today: Option<PrimitiveDateTime>,
+        last_punchin: Option<PrimitiveDateTime>,
+        last_punchout: Option<PrimitiveDateTime>,
         total_worked: Duration,
         num_days_worked: u32,
         now: &PrimitiveDateTime,
         clocked_in: bool,
     ) -> Self {
-        let avg_worked = total_worked / num_days_worked;
+        let avg_worked = total_worked.checked_div(num_days_worked as i32);
         let total_worked_until_prev = total_worked - worked_today;
-        let overtime =
-            total_worked_until_prev - ((num_days_worked - 1_u32) * 8_u32 * Duration::HOUR);
+        let overtime = if num_days_worked > 0 {
+            total_worked_until_prev - ((num_days_worked - 1_u32) * 8_u32 * Duration::HOUR)
+        } else {
+            Duration::ZERO
+        };
         let still_to_work_8 = (8_u32 * Duration::HOUR) - worked_today;
         let still_to_work = still_to_work_8 - overtime;
         let time_to_leave = clocked_in.then(|| *now + still_to_work);
@@ -141,13 +144,14 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
     let mut state = States::ExpectingClockIn;
     let mut clockin = PrimitiveDateTime::MIN;
     let mut worked_today: Duration = Duration::ZERO;
-    let mut first_punchin_today: PrimitiveDateTime = PrimitiveDateTime::MIN;
-    let mut last_punchout: PrimitiveDateTime = PrimitiveDateTime::MIN;
-    let mut last_punchin: PrimitiveDateTime = PrimitiveDateTime::MIN;
+    let mut first_punchin_today: Option<PrimitiveDateTime> = None;
+    let mut last_punchout: Option<PrimitiveDateTime> = None;
+    let mut last_punchin: Option<PrimitiveDateTime> = None;
     let mut total_worked: Duration = Duration::ZERO;
     let mut num_days_worked: u32 = 0;
     let mut line_number: usize = 0;
     let mut previous_date: Date = PrimitiveDateTime::MIN.date();
+    let today = OffsetDateTime::now_local()?.date();
     for line in lines {
         line_number += 1;
         let ip = line.with_context(|| format!("failed to read line {}", line_number))?;
@@ -163,11 +167,17 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
                 if previous_date != current_date {
                     worked_today = Duration::ZERO;
                     num_days_worked += 1;
-                    first_punchin_today = time_stamp;
+                    if time_stamp.date() == today && first_punchin_today.is_none() {
+                        first_punchin_today = Some(time_stamp);
+                    }
                     previous_date = current_date;
                 }
                 clockin = time_stamp;
-                last_punchin = max(last_punchin, time_stamp);
+                if let Some(lpi) = last_punchin {
+                    last_punchin = Some(max(lpi, time_stamp));
+                } else {
+                    last_punchin = Some(time_stamp);
+                }
                 Ok(States::ExpectingClockOut)
             }
             (States::ExpectingClockOut, ClockType::Out) => {
@@ -180,7 +190,11 @@ fn summarize_lines(reader: Box<dyn BufRead>, now: &PrimitiveDateTime) -> anyhow:
                 let clocked = time_stamp - clockin;
                 worked_today += clocked;
                 total_worked += clocked;
-                last_punchout = max(last_punchout, time_stamp);
+                if let Some(lpa) = last_punchout {
+                    last_punchout = Some(max(lpa, time_stamp))
+                } else {
+                    last_punchout = Some(time_stamp);
+                }
                 Ok(States::ExpectingClockIn)
             }
             (States::ExpectingClockIn, ClockType::Out) => Err(anyhow!(
@@ -251,17 +265,18 @@ pub fn format_date_time(date_time: PrimitiveDateTime) -> anyhow::Result<String> 
 #[inline]
 pub fn hours_mins(duration: Duration) -> String {
     let hours = duration.whole_hours();
-    format!(
-        "{: <5} hours, {: <5} minutes",
-        hours,
-        i64::abs((duration - Duration::hours(hours)).whole_minutes())
-    )
+    let minutes = (duration - Duration::hours(hours)).whole_minutes();
+    if hours == 0 && minutes.is_negative() {
+        format!("-{: <4} hours, {: <5} minutes", hours, i64::abs(minutes))
+    } else {
+        format!("{: <5} hours, {: <5} minutes", hours, i64::abs(minutes))
+    }
 }
 
 #[inline]
 pub fn now() -> anyhow::Result<PrimitiveDateTime> {
-    let now: PrimitiveDateTime =
-        parse_timestamp(&OffsetDateTime::now_local()?.format(TIMESTAMP_FORMAT)?)?;
+    let local = OffsetDateTime::now_local()?;
+    let now = PrimitiveDateTime::new(local.date(), local.time());
     Ok(now)
 }
 
@@ -332,18 +347,18 @@ mod tests {
         fn aaa_summary_new(tc: &SummaryNewTestCase) {
             let result = Summary::new(
                 tc.worked_today,
-                tc.first_punchin_today,
-                tc.last_punchin,
-                tc.last_punchout,
+                Some(tc.first_punchin_today),
+                Some(tc.last_punchin),
+                Some(tc.last_punchout),
                 tc.total_worked,
                 tc.num_days_worked,
                 &tc.now,
                 tc.clocked_in,
             );
             assert_eq!(result.num_days_worked, tc.num_days_worked);
-            assert_eq!(result.first_punchin_today, tc.first_punchin_today);
+            assert_eq!(result.first_punchin_today, Some(tc.first_punchin_today));
             assert_eq!(result.total_worked, tc.total_worked);
-            assert_eq!(result.avg_worked, tc.expected_avg_worked);
+            assert_eq!(result.avg_worked, Some(tc.expected_avg_worked));
             assert_eq!(result.overtime, tc.expected_overtime);
             assert_eq!(result.still_to_work, tc.expected_still_to_work);
             assert_eq!(result.still_to_work_8, tc.expected_still_to_work_8);

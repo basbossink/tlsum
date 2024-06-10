@@ -11,39 +11,47 @@ fn main() -> anyhow::Result<()> {
     println!(
         r"
 {:─<71}
-{:<45}{}
-{:<45}{}
-{:<45}{}
 {:─<71}
+{:<45}{}
+{:<45}{}
+{:<45}{}
 {:─<71}
 {:<45}{}
 {:<45}{}
 {:<45}{:<5} days 
 {:─<71}
+{:<45}{}
+{:<45}{}
+{:<45}{}
+{:<45}{}
+{:<45}{}
+{:<45}{}
 {:─<71}
-{:<45}{}
-{:<45}{}
-{:<45}{}
-{:<45}{}
-{:<45}{}
-{:<45}{}
 {:─<71}",
         "─",
-        "First punch in today:",
-        format_time(summary.first_punchin_today)?,
-        "Last punch in:",
-        format_date_time(summary.last_punchin)?,
-        "Last punch out:",
-        format_date_time(summary.last_punchout)?,
         "─",
+        "First punch in today:",
+        summary
+            .first_punchin_today
+            .map_or_else(undefined, format_time)?,
+        "Last punch in:",
+        summary
+            .last_punchin
+            .map_or_else(undefined, format_date_time)?,
+        "Last punch out:",
+        summary
+            .last_punchout
+            .map_or_else(undefined, format_date_time)?,
         "─",
         "Average number of hours worked per workday:",
-        hours_mins(summary.avg_worked),
+        summary
+            .avg_worked
+            .map(hours_mins)
+            .unwrap_or_else(|| UNDEFINED_CHAR_REPRESENTATION.to_string()),
         "Total time worked:",
         hours_mins(summary.total_worked),
         "Number of days worked:",
         summary.num_days_worked,
-        "─",
         "─",
         "Cummulative overtime per yesterday:",
         hours_mins(summary.overtime),
@@ -59,6 +67,7 @@ fn main() -> anyhow::Result<()> {
             .map_or_else(undefined, format_time)?,
         "Time to leave:",
         summary.time_to_leave.map_or_else(undefined, format_time)?,
+        "─",
         "─",
     );
     Ok(())
